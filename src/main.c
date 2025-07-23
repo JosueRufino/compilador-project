@@ -102,20 +102,26 @@ void print_tokens(const char* source, int verbose) {
     Token token;
     
     do {
+        // Zerar token antes de usar
+        memset(&token, 0, sizeof(Token));
+        
         token = lexer_next_token(lexer);
         printf("%-15s", token_type_to_string(token.type));
         if (token.value) {
             printf(" %-15s", token.value);
         }
         printf(" [%d:%d]\n", token.line, token.column);
-        token_destroy(&token);
+        
+        // Liberar apenas se não é NULL
+        if (token.value) {
+            free(token.value);
+            token.value = NULL;
+        }
     } while (token.type != TOKEN_EOF);
     
     lexer_destroy(lexer);
     printf("\n");
 }
-
-// Adicione esta função de debug ao main.c para diagnosticar o problema
 
 void debug_tokens(const char* source) {
     printf("=== DEBUG DETALHADO DOS TOKENS ===\n");
@@ -144,14 +150,13 @@ void debug_tokens(const char* source) {
             }
         }
         
+        // FIX: Use token_destroy
         token_destroy(&token);
-    } while (token.type != TOKEN_EOF && count < 50); // Limite para evitar loop infinito
+    } while (token.type != TOKEN_EOF && count < 50);
     
     lexer_destroy(lexer);
     printf("=== FIM DEBUG TOKENS ===\n\n");
 }
-
-// No main, antes da análise sintática, adicione:
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

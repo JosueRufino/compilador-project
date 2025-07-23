@@ -1,90 +1,105 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g -O2
+CFLAGS = -Wall -Wextra -std=c99 -g
 SRCDIR = src
-OBJDIR = obj
 BINDIR = bin
-TESTDIR = tests
 
-SOURCES = $(wildcard $(SRCDIR)/*.c)
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
-TARGET = $(BINDIR)/ccompiler
+# Criar diretório bin
+$(shell mkdir -p $(BINDIR))
 
-.PHONY: all clean test install uninstall help
+# Caminhos dos módulos
+LEXER_DIR = $(SRCDIR)/lexer
+PARSER_DIR = $(SRCDIR)/parser
+AST_DIR = $(SRCDIR)/ast
+SEMANTIC_DIR = $(SRCDIR)/semantic
+SYMBOL_TABLE_DIR = $(SRCDIR)/symbol_table
+CODE_GEN_DIR = $(SRCDIR)/code_generator
+ERROR_DIR = $(SRCDIR)/error_handler
 
-all: $(TARGET)
+# Arquivos principais de cada módulo
+LEXER_SRCS = $(LEXER_DIR)/lexer.c
+PARSER_SRCS = $(PARSER_DIR)/parser.c
+AST_SRCS = $(AST_DIR)/ast.c
+SEMANTIC_SRCS = $(SEMANTIC_DIR)/semantic.c
+SYMBOL_TABLE_SRCS = $(SYMBOL_TABLE_DIR)/symbol_table.c
+CODE_GEN_SRCS = $(CODE_GEN_DIR)/code_generator.c
+ERROR_SRCS = $(ERROR_DIR)/error_handler.c
 
-$(TARGET): $(OBJECTS) | $(BINDIR)
-	$(CC) $(OBJECTS) -o $@
-	@echo "✅ Compilador construído com sucesso!"
+# Todos os módulos principais
+ALL_MODULES = $(LEXER_SRCS) $(PARSER_SRCS) $(AST_SRCS) $(SEMANTIC_SRCS) \
+              $(SYMBOL_TABLE_SRCS) $(CODE_GEN_SRCS) $(ERROR_SRCS)
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# Executáveis
+MAIN = $(BINDIR)/compiler
+LEXER_TEST = $(BINDIR)/test-lexer
+PARSER_TEST = $(BINDIR)/test-parser
+SEMANTIC_TEST = $(BINDIR)/test-semantic
 
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
+# Includes para compilação
+INCLUDES = -I$(LEXER_DIR) -I$(PARSER_DIR) -I$(AST_DIR) -I$(SEMANTIC_DIR) \
+           -I$(SYMBOL_TABLE_DIR) -I$(CODE_GEN_DIR) -I$(ERROR_DIR)
 
-$(BINDIR):
-	mkdir -p $(BINDIR)
+.PHONY: all clean test-lexer test-parser test-semantic setup
+
+all: $(MAIN) $(LEXER_TEST) $(PARSER_TEST) $(SEMANTIC_TEST)
+
+# Compilador principal
+$(MAIN): $(ALL_MODULES) $(SRCDIR)/main.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
+
+# Testador do lexer
+$(LEXER_TEST): $(LEXER_SRCS) $(AST_SRCS) $(LEXER_DIR)/test_lexer.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
+
+# Testador do parser
+$(PARSER_TEST): $(LEXER_SRCS) $(PARSER_SRCS) $(AST_SRCS) $(PARSER_DIR)/test_parser.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
+
+# Testador semântico
+$(SEMANTIC_TEST): $(LEXER_SRCS) $(PARSER_SRCS) $(AST_SRCS) $(SEMANTIC_SRCS) \
+                  $(SYMBOL_TABLE_SRCS) $(SEMANTIC_DIR)/test_semantic.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
+
+# Testes individuais
+test-lexer: $(LEXER_TEST)
+	@echo "=== TESTANDO ANALISADOR LÉXICO ==="
+	./$(LEXER_TEST) examples/exemplo1.c
+
+test-parser: $(PARSER_TEST)
+	@echo "=== TESTANDO ANALISADOR SINTÁTICO ==="
+	./$(PARSER_TEST) examples/exemplo1.c
+
+test-semantic: $(SEMANTIC_TEST)
+	@echo "=== TESTANDO ANALISADOR SEMÂNTICO ==="
+	./$(SEMANTIC_TEST) examples/exemplo2.c
+
+# Teste completo
+test-all: test-lexer test-parser test-semantic
+	@echo "=== TESTANDO COMPILADOR COMPLETO ==="
+	./$(MAIN) examples/exemplo1.c
 
 clean:
-	rm -rf $(OBJDIR) $(BINDIR)
-	rm -f *.c *.s *.bc test_*.c
-	@echo "🧹 Arquivos limpos!"
+	rm -rf $(BINDIR)
 
-test: $(TARGET)
-	@echo "🧪 Executando testes..."
-	@echo 'int main() { int x = 10; return x + 5; }' > test_simple.c
-	./$(TARGET) -v --tokens --ast test_simple.c -o test_simple_out.c
-	@echo ""
-	@echo 'int fibonacci(int n) { if (n <= 1) return n; return fibonacci(n-1) + fibonacci(n-2); } int main() { return fibonacci(5); }' > test_fibonacci.c
-	./$(TARGET) -v test_fibonacci.c -o test_fibonacci_out.c
-	@echo ""
-	@echo "✅ Testes concluídos!"
-
-test-assembly: $(TARGET)
-	@echo "🔧 Testando geração de assembly..."
-	@echo 'int main() { int x = 5; int y = 10; return x + y; }' > test_asm.c
-	./$(TARGET) -S -v test_asm.c -o test_asm.s
-	@echo "✅ Assembly gerado!"
-
-test-bytecode: $(TARGET)
-	@echo "📦 Testando geração de bytecode..."
-	@echo 'int main() { return 42; }' > test_bc.c
-	./$(TARGET) -b -v test_bc.c -o test_bc.bc
-	@echo "✅ Bytecode gerado!"
-
-install: $(TARGET)
-	sudo cp $(TARGET) /usr/local/bin/
-	@echo "📦 Compilador instalado em /usr/local/bin/"
-
-uninstall:
-	sudo rm -f /usr/local/bin/ccompiler
-	@echo "🗑️ Compilador removido!"
+# Criar estrutura de pastas em src/
+setup:
+	@echo "Criando estrutura modular em src/..."
+	mkdir -p $(LEXER_DIR) $(PARSER_DIR) $(AST_DIR) $(SEMANTIC_DIR) \
+	         $(SYMBOL_TABLE_DIR) $(CODE_GEN_DIR) $(ERROR_DIR) examples $(BINDIR)
+	@echo "Estrutura criada!"
 
 help:
-	@echo "📚 Comandos disponíveis:"
-	@echo "  make              - Compila o projeto"
-	@echo "  make clean        - Remove arquivos compilados"
-	@echo "  make test         - Executa testes básicos"
-	@echo "  make test-assembly- Testa geração de assembly"
-	@echo "  make test-bytecode- Testa geração de bytecode"
-	@echo "  make install      - Instala o compilador"
-	@echo "  make uninstall    - Remove o compilador"
-	@echo "  make help         - Mostra esta ajuda"
-
-# Regras para desenvolvimento
-debug: CFLAGS += -DDEBUG -g3
-debug: $(TARGET)
-
-release: CFLAGS += -O3 -DNDEBUG
-release: clean $(TARGET)
-
-# Análise estática
-lint:
-	@echo "🔍 Executando análise estática..."
-	cppcheck --enable=all --std=c99 $(SRCDIR)/*.c
-
-# Documentação
-docs:
-	@echo "📖 Gerando documentação..."
-	doxygen Doxyfile
+	@echo "=== COMPILADOR C MODULAR ==="
+	@echo "Comandos:"
+	@echo "  make all           - Compilar tudo"  
+	@echo "  make test-lexer    - Testar só o analisador léxico"
+	@echo "  make test-parser   - Testar só o analisador sintático"
+	@echo "  make test-semantic - Testar só o analisador semântico"
+	@echo "  make test-all      - Testar tudo"
+	@echo "  make setup         - Criar estrutura de pastas"
+	@echo "  make clean         - Limpar executáveis"
+	@echo ""
+	@echo "Uso individual:"
+	@echo "  ./bin/test-lexer arquivo.c"
+	@echo "  ./bin/test-parser arquivo.c"  
+	@echo "  ./bin/test-semantic arquivo.c"
+	@echo "  ./bin/compiler arquivo.c"

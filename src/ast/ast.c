@@ -113,53 +113,117 @@ void ast_destroy(ASTNode *node)
     if (!node)
         return;
 
-    // Destruir filhos
+    // Destruir filhos primeiro
     for (int i = 0; i < node->child_count; i++)
     {
-        ast_destroy(node->children[i]);
+        if (node->children[i])
+        {
+            ast_destroy(node->children[i]);
+            node->children[i] = NULL; // Evitar double-free
+        }
     }
-    free(node->children);
+
+    // Liberar array de filhos
+    if (node->children)
+    {
+        free(node->children);
+        node->children = NULL;
+    }
 
     // Destruir dados específicos
     switch (node->type)
     {
     case AST_FUNCTION_DECLARATION:
-        free(node->data.function_decl.name);
+        if (node->data.function_decl.name)
+        {
+            free(node->data.function_decl.name);
+            node->data.function_decl.name = NULL;
+        }
         break;
+
     case AST_VARIABLE_DECLARATION:
-        free(node->data.var_decl.name);
+        if (node->data.var_decl.name)
+        {
+            free(node->data.var_decl.name);
+            node->data.var_decl.name = NULL;
+        }
         break;
+
     case AST_STRUCT_DECLARATION:
-        free(node->data.struct_decl.name);
+        if (node->data.struct_decl.name)
+        {
+            free(node->data.struct_decl.name);
+            node->data.struct_decl.name = NULL;
+        }
         break;
+
     case AST_ENUM_DECLARATION:
-        free(node->data.enum_decl.name);
+        if (node->data.enum_decl.name)
+        {
+            free(node->data.enum_decl.name);
+            node->data.enum_decl.name = NULL;
+        }
         break;
+
     case AST_FUNCTION_CALL:
-        free(node->data.function_call.name);
+        if (node->data.function_call.name)
+        {
+            free(node->data.function_call.name);
+            node->data.function_call.name = NULL;
+        }
         break;
+
     case AST_MEMBER_ACCESS:
-        free(node->data.member_access.member);
+        if (node->data.member_access.member)
+        {
+            free(node->data.member_access.member);
+            node->data.member_access.member = NULL;
+        }
         break;
+
     case AST_IDENTIFIER:
-        free(node->data.identifier.name);
+        if (node->data.identifier.name)
+        {
+            free(node->data.identifier.name);
+            node->data.identifier.name = NULL;
+        }
         break;
+
     case AST_NUMBER_LITERAL:
     case AST_FLOAT_LITERAL:
     case AST_STRING_LITERAL:
     case AST_CHAR_LITERAL:
-        free(node->data.literal.value);
+        if (node->data.literal.value)
+        {
+            free(node->data.literal.value);
+            node->data.literal.value = NULL;
+        }
         break;
+
     case AST_PREPROCESSOR_DIRECTIVE:
     case AST_INCLUDE_DIRECTIVE:
     case AST_DEFINE_DIRECTIVE:
-        free(node->data.preprocessor.directive);
-        free(node->data.preprocessor.content);
+        if (node->data.preprocessor.directive)
+        {
+            free(node->data.preprocessor.directive);
+            node->data.preprocessor.directive = NULL;
+        }
+        if (node->data.preprocessor.content)
+        {
+            free(node->data.preprocessor.content);
+            node->data.preprocessor.content = NULL;
+        }
         break;
+
     default:
+        // Outros tipos não têm dados específicos para liberar
         break;
     }
 
+    // Zerar a estrutura antes de liberar (debug)
+    memset(node, 0, sizeof(ASTNode));
+
+    // Liberar o nó
     free(node);
 }
 

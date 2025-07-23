@@ -189,7 +189,7 @@ static Token lexer_read_number(Lexer *lexer)
     int start = lexer->position;
     int has_dot = 0;
 
-    // Ler dígitos e ponto decimal
+    // Ler apenas dígitos e um ponto decimal (máximo)
     while (isdigit(lexer_current_char(lexer)) ||
            (lexer_current_char(lexer) == '.' && !has_dot))
     {
@@ -205,6 +205,7 @@ static Token lexer_read_number(Lexer *lexer)
     strncpy(token.value, &lexer->source[start], length);
     token.value[length] = '\0';
 
+    // Simples: tem ponto = float, senão = number
     token.type = has_dot ? TOKEN_FLOAT : TOKEN_NUMBER;
 
     return token;
@@ -220,26 +221,47 @@ static Token lexer_read_string(Lexer *lexer)
     lexer_advance(lexer); // Skip opening quote
     int start = lexer->position;
 
+    // Buffer simples para a string processada
+    char temp_buffer[1024];
+    int buffer_pos = 0;
+
     while (lexer_current_char(lexer) != '"' && lexer_current_char(lexer) != '\0')
     {
         if (lexer_current_char(lexer) == '\\')
         {
             lexer_advance(lexer); // Skip escape character
-            if (lexer_current_char(lexer) != '\0')
+
+            // Apenas escapes básicos mais comuns
+            switch (lexer_current_char(lexer))
             {
-                lexer_advance(lexer); // Skip escaped character
+            case 'n':
+                temp_buffer[buffer_pos++] = '\n';
+                break;
+            case 't':
+                temp_buffer[buffer_pos++] = '\t';
+                break;
+            case '\\':
+                temp_buffer[buffer_pos++] = '\\';
+                break;
+            case '"':
+                temp_buffer[buffer_pos++] = '"';
+                break;
+            default:
+                // Para outros escapes, manter literal
+                temp_buffer[buffer_pos++] = lexer_current_char(lexer);
+                break;
             }
+            lexer_advance(lexer);
         }
         else
         {
+            temp_buffer[buffer_pos++] = lexer_current_char(lexer);
             lexer_advance(lexer);
         }
     }
 
-    int length = lexer->position - start;
-    token.value = malloc(length + 1);
-    strncpy(token.value, &lexer->source[start], length);
-    token.value[length] = '\0';
+    temp_buffer[buffer_pos] = '\0';
+    token.value = strdup(temp_buffer);
 
     if (lexer_current_char(lexer) == '"')
     {
@@ -527,6 +549,7 @@ Token lexer_next_token(Lexer *lexer)
     token.column = lexer->column;
     return token;
 }
+
 const char *token_type_to_string(TokenType type)
 {
     switch (type)
