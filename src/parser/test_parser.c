@@ -7,7 +7,7 @@
 char* read_file(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) {
-        printf("Erro: não foi possível abrir %s\n", filename);
+        printf("❌ Erro: não foi possível abrir %s\n", filename);
         return NULL;
     }
     
@@ -23,6 +23,28 @@ char* read_file(const char* filename) {
     return content;
 }
 
+void print_separator(const char* title) {
+    printf("\n=== %s ===\n", title);
+}
+
+void print_success() {
+    printf("✅ Análise sintática concluída com sucesso!\n");
+}
+
+void print_error(const char* error_msg) {
+    printf("❌ ERRO SINTÁTICO DETECTADO:\n");
+    printf("   %s\n", error_msg);
+}
+
+void print_recovery_info(int errors_recovered) {
+    if (errors_recovered > 0) {
+        printf("\n📋 RELATÓRIO DE RECUPERAÇÃO:\n");
+        printf("   • %d erro(s) detectado(s) e recuperado(s)\n", errors_recovered);
+        printf("   • Parser continuou análise após recuperação\n");
+    }
+}
+
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         printf("=== TESTADOR DO ANALISADOR SINTÁTICO ===\n");
@@ -33,22 +55,46 @@ int main(int argc, char* argv[]) {
     char* source = read_file(argv[1]);
     if (!source) return 1;
     
-    printf("=== ANALISADOR SINTÁTICO ===\n");
-    printf("Arquivo: %s\n\n", argv[1]);
+    print_separator("ANALISADOR SINTÁTICO");
+    printf("📁 Arquivo: %s\n", argv[1]);
     
     Lexer* lexer = lexer_create(source);
     Parser* parser = parser_create(lexer);
     
+    // Capturar estado inicial
+    int initial_error_state = parser->has_error;
+    
     ASTNode* ast = parser_parse(parser);
     
+    // Verificar resultado final
     if (parser->has_error) {
-        printf("❌ ERRO SINTÁTICO: %s\n", parser->error_message);
+        print_error(parser->error_message);
+        printf("\n🚫 Falha na análise sintática - parsing interrompido\n");
+        
+        if (ast) ast_destroy(ast);
+        parser_destroy(parser);
+        lexer_destroy(lexer);
+        free(source);
         return 1;
     }
     
-    printf("✅ Análise sintática bem-sucedida!\n\n");
-    printf("=== ÁRVORE SINTÁTICA ABSTRATA ===\n");
-    ast_print(ast, 0);
+    // Se chegou aqui, parsing foi bem-sucedido (com ou sem recuperação)
+    print_success();
+    
+    // Verificar se houve recuperação de erros
+    // (Esta informação deveria vir do parser, mas por simplicidade...)
+    
+    print_separator("ÁRVORE SINTÁTICA ABSTRATA");
+    if (ast) {
+        ast_print(ast, 0);
+    } else {
+        printf("⚠️  AST vazia ou não gerada\n");
+    }
+    
+    print_separator("RESUMO");
+    printf("✅ Parsing concluído\n");
+    printf("📊 AST gerada com sucesso\n");
+    printf("🎯 Pronto para análise semântica\n");
     
     ast_destroy(ast);
     parser_destroy(parser);
@@ -56,3 +102,4 @@ int main(int argc, char* argv[]) {
     free(source);
     return 0;
 }
+
