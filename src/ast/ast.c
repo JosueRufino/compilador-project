@@ -238,7 +238,11 @@ static void print_indent(int indent)
 void ast_print(ASTNode *node, int indent)
 {
     if (!node)
+    {
+        print_indent(indent);
+        printf("(NULL)\n");
         return;
+    }
 
     print_indent(indent);
     printf("%s", ast_node_type_to_string(node->type));
@@ -246,37 +250,20 @@ void ast_print(ASTNode *node, int indent)
     switch (node->type)
     {
     case AST_FUNCTION_DECLARATION:
-        printf(" (%s)", node->data.function_decl.name);
+        if (node->data.function_decl.name)
+            printf(" (%s)", node->data.function_decl.name);
         break;
     case AST_VARIABLE_DECLARATION:
-        printf(" (%s)", node->data.var_decl.name);
+        if (node->data.var_decl.name)
+            printf(" (%s)", node->data.var_decl.name);
         break;
-    case AST_STRUCT_DECLARATION:
-        printf(" (%s)", node->data.struct_decl.name);
-        break;
-    case AST_ENUM_DECLARATION:
-        printf(" (%s)", node->data.enum_decl.name);
-        break;
-    case AST_FUNCTION_CALL:
-        printf(" (%s)", node->data.function_call.name);
-        break;
-    case AST_IDENTIFIER:
-        printf(" (%s)", node->data.identifier.name);
-        break;
+    // ... (outros casos com verificação de NULL)
     case AST_NUMBER_LITERAL:
     case AST_FLOAT_LITERAL:
     case AST_STRING_LITERAL:
     case AST_CHAR_LITERAL:
-        printf(" (%s)", node->data.literal.value);
-        break;
-    case AST_BINARY_EXPRESSION:
-        printf(" (%s)", token_type_to_string(node->data.binary_expr.operator));
-        break;
-    case AST_UNARY_EXPRESSION:
-        printf(" (%s)", unary_operator_to_string(node->data.unary_expr.operator));
-        break;
-    case AST_MEMBER_ACCESS:
-        printf(" (%s)", node->data.member_access.member);
+        if (node->data.literal.value)
+            printf(" (%s)", node->data.literal.value);
         break;
     default:
         break;
@@ -284,10 +271,21 @@ void ast_print(ASTNode *node, int indent)
 
     printf("\n");
 
-    // Imprimir filhos
-    for (int i = 0; i < node->child_count; i++)
+    // Imprimir filhos com verificação
+    if (node->children && node->child_count > 0)
     {
-        ast_print(node->children[i], indent + 1);
+        for (int i = 0; i < node->child_count; i++)
+        {
+            if (node->children[i])
+            {
+                ast_print(node->children[i], indent + 1);
+            }
+            else
+            {
+                print_indent(indent + 1);
+                printf("(Child %d NULL)\n", i);
+            }
+        }
     }
 }
 

@@ -105,6 +105,119 @@ typedef enum {
     UNARY_POST_DECREMENT
 } UnaryOperator;
 
+// Definição de estruturas para os dados da união
+typedef struct {
+    char* name;
+    DataType param_type;
+} ASTParameter;
+
+typedef struct {
+    char* directive;
+    char* content;
+} ASTPreprocessor;
+
+typedef struct {
+    char* name;
+    DataType return_type;
+    TypeModifier modifiers;
+    struct ASTNode* parameters;
+    struct ASTNode* body;
+    int is_variadic;
+} ASTFunctionDecl;
+
+typedef struct {
+    char* name;
+    DataType var_type;
+    TypeModifier modifiers;
+    struct ASTNode* initializer;
+    struct ASTNode* array_size;
+    int pointer_level;
+} ASTVariableDecl;
+
+typedef struct {
+    char* name;
+    DataType base_type;
+    struct ASTNode* fields;
+} ASTStructDecl;
+
+typedef struct {
+    char* name;
+    struct ASTNode* values;
+} ASTEnumDecl;
+
+typedef struct {
+    TokenType operator;
+    struct ASTNode* left;
+    struct ASTNode* right;
+} ASTBinaryExpr;
+
+typedef struct {
+    UnaryOperator operator;
+    struct ASTNode* operand;
+} ASTUnaryExpr;
+
+typedef struct {
+    struct ASTNode* condition;
+    struct ASTNode* true_expr;
+    struct ASTNode* false_expr;
+} ASTTernaryExpr;
+
+typedef struct {
+    struct ASTNode* condition;
+    struct ASTNode* then_stmt;
+    struct ASTNode* else_stmt;
+} ASTIfStmt;
+
+typedef struct {
+    struct ASTNode* condition;
+    struct ASTNode* body;
+} ASTWhileStmt;
+
+typedef struct {
+    struct ASTNode* init;
+    struct ASTNode* condition;
+    struct ASTNode* update;
+    struct ASTNode* body;
+} ASTForStmt;
+
+typedef struct {
+    struct ASTNode* expression;
+    struct ASTNode* cases;
+} ASTSwitchStmt;
+
+typedef struct {
+    struct ASTNode* value;
+    struct ASTNode* statements;
+} ASTCaseStmt;
+
+typedef struct {
+    struct ASTNode* expression;
+} ASTReturnStmt;
+
+typedef struct {
+    char* name;
+    struct ASTNode* arguments;
+} ASTFunctionCall;
+
+typedef struct {
+    struct ASTNode* array;
+    struct ASTNode* index;
+} ASTArrayAccess;
+
+typedef struct {
+    struct ASTNode* object;
+    char* member;
+    int is_pointer_access; // -> vs .
+} ASTMemberAccess;
+
+typedef struct {
+    char* name;
+} ASTIdentifier;
+
+typedef struct {
+    char* value;
+} ASTLiteral;
+
 // Estrutura do nó AST
 typedef struct ASTNode {
     ASTNodeType type;
@@ -117,112 +230,26 @@ typedef struct ASTNode {
     
     // Dados específicos do nó
     union {
-        struct {
-            char* name;
-            DataType return_type;
-            TypeModifier modifiers;
-            struct ASTNode* parameters;
-            struct ASTNode* body;
-            int is_variadic;
-        } function_decl;
-        
-        struct {
-            char* name;
-            DataType var_type;
-            TypeModifier modifiers;
-            struct ASTNode* initializer;
-            struct ASTNode* array_size;
-            int pointer_level;
-        } var_decl;
-        
-        struct {
-            char* name;
-            DataType base_type;
-            struct ASTNode* fields;
-        } struct_decl;
-        
-        struct {
-            char* name;
-            struct ASTNode* values;
-        } enum_decl;
-        
-        struct {
-            TokenType operator;
-            struct ASTNode* left;
-            struct ASTNode* right;
-        } binary_expr;
-        
-        struct {
-            UnaryOperator operator;
-            struct ASTNode* operand;
-        } unary_expr;
-        
-        struct {
-            struct ASTNode* condition;
-            struct ASTNode* true_expr;
-            struct ASTNode* false_expr;
-        } ternary_expr;
-        
-        struct {
-            struct ASTNode* condition;
-            struct ASTNode* then_stmt;
-            struct ASTNode* else_stmt;
-        } if_stmt;
-        
-        struct {
-            struct ASTNode* condition;
-            struct ASTNode* body;
-        } while_stmt;
-        
-        struct {
-            struct ASTNode* init;
-            struct ASTNode* condition;
-            struct ASTNode* update;
-            struct ASTNode* body;
-        } for_stmt;
-        
-        struct {
-            struct ASTNode* expression;
-            struct ASTNode* cases;
-        } switch_stmt;
-        
-        struct {
-            struct ASTNode* value;
-            struct ASTNode* statements;
-        } case_stmt;
-        
-        struct {
-            struct ASTNode* expression;
-        } return_stmt;
-        
-        struct {
-            char* name;
-            struct ASTNode* arguments;
-        } function_call;
-        
-        struct {
-            struct ASTNode* array;
-            struct ASTNode* index;
-        } array_access;
-        
-        struct {
-            struct ASTNode* object;
-            char* member;
-            int is_pointer_access; // -> vs .
-        } member_access;
-        
-        struct {
-            char* name;
-        } identifier;
-        
-        struct {
-            char* value;
-        } literal;
-        
-        struct {
-            char* directive;
-            char* content;
-        } preprocessor;
+        ASTPreprocessor preprocessor;
+        ASTFunctionDecl function_decl;
+        ASTVariableDecl var_decl;
+        ASTStructDecl struct_decl;
+        ASTEnumDecl enum_decl;
+        ASTBinaryExpr binary_expr;
+        ASTUnaryExpr unary_expr;
+        ASTTernaryExpr ternary_expr;
+        ASTIfStmt if_stmt;
+        ASTWhileStmt while_stmt;
+        ASTForStmt for_stmt;
+        ASTSwitchStmt switch_stmt;
+        ASTCaseStmt case_stmt;
+        ASTReturnStmt return_stmt;
+        ASTFunctionCall function_call;
+        ASTArrayAccess array_access;
+        ASTMemberAccess member_access;
+        ASTIdentifier identifier;
+        ASTLiteral literal;
+        ASTParameter parameter;  // Campo adicionado para AST_PARAMETER
     } data;
 } ASTNode;
 

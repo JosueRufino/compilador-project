@@ -1,5 +1,3 @@
-// parser.c - VERSÃO REFATORADA seguindo a gramática corrigida
-
 #include "parser.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,28 +9,79 @@ Parser *parser_create(Lexer *lexer)
     parser->lexer = lexer;
     parser->has_error = 0;
     parser->error_message[0] = '\0';
-
-    // Obter primeiro token
+    parser->recovered_errors = malloc(sizeof(ParserErrorList));
+    parser->recovered_errors->errors = NULL;
+    parser->recovered_errors->count = 0;
     parser->current_token = lexer_next_token(lexer);
-
     return parser;
 }
 
-void parser_destroy(Parser *parser)
-{
-    if (parser)
-    {
+// parser.c (trecho)
+void parser_destroy(Parser* parser) {
+    if (parser) {
         token_destroy(&parser->current_token);
+        if (parser->recovered_errors) {
+            ErrorInfo* current = parser->recovered_errors->errors;
+            while (current) {
+                ErrorInfo* next = current->next;
+                free(current);
+                current = next;
+            }
+            free(parser->recovered_errors);
+        }
         free(parser);
+    }
+}
+
+void parser_add_recovered_error(Parser *parser, const char *message)
+{
+    ErrorInfo *new_error = malloc(sizeof(ErrorInfo));
+    snprintf(new_error->message, sizeof(new_error->message), "%s", message);
+    new_error->line = parser->current_token.line;
+    new_error->column = parser->current_token.column;
+    new_error->next = NULL;
+
+    if (parser->recovered_errors->errors == NULL)
+    {
+        parser->recovered_errors->errors = new_error;
+    }
+    else
+    {
+        ErrorInfo *current = parser->recovered_errors->errors;
+        while (current->next)
+        {
+            current = current->next;
+        }
+        current->next = new_error;
+    }
+    parser->recovered_errors->count++;
+}
+
+void parser_print_recovered_errors(Parser *parser)
+{
+    if (!parser->recovered_errors || parser->recovered_errors->count == 0)
+    {
+        printf("Nenhum erro sintático detectado.\n");
+        return;
+    }
+
+    printf("\n📋 Erros Sintáticos Encontrados (%d):\n", parser->recovered_errors->count);
+    ErrorInfo *current = parser->recovered_errors->errors;
+    while (current)
+    {
+        printf("   • Linha %d, Coluna %d: %s\n", current->line, current->column, current->message);
+        current = current->next;
     }
 }
 
 void parser_error(Parser *parser, const char *message)
 {
-    parser->has_error = 1;
-    snprintf(parser->error_message, sizeof(parser->error_message),
+    char full_message[256];
+    snprintf(full_message, sizeof(full_message),
              "Erro sintático na linha %d, coluna %d: %s",
              parser->current_token.line, parser->current_token.column, message);
+    parser_add_recovered_error(parser, full_message);
+    parser->has_error = 1; // Ainda usamos para sinalizar erro, mas não paramos
 }
 
 int parser_match(Parser *parser, TokenType type)
@@ -49,6 +98,7 @@ void parser_consume(Parser *parser, TokenType type, const char *error_msg)
     else
     {
         parser_error(parser, error_msg);
+        parser_skip_to_recovery_point(parser); // Tenta recuperar
     }
 }
 
@@ -58,9 +108,9 @@ void parser_advance(Parser *parser)
     parser->current_token = lexer_next_token(parser->lexer);
 }
 
+// parser.c (trecho)
 void parser_skip_to_recovery_point(Parser *parser)
 {
-    // Pular tokens até encontrar um ponto de recuperação seguro
     while (!parser_match(parser, TOKEN_EOF) &&
            !parser_match(parser, TOKEN_SEMICOLON) &&
            !parser_match(parser, TOKEN_RBRACE) &&
@@ -71,9 +121,7 @@ void parser_skip_to_recovery_point(Parser *parser)
     {
         parser_advance(parser);
     }
-
-    // Se encontrou ';', consumir para continuar
-    if (parser_match(parser, TOKEN_SEMICOLON))
+    if (parser_match(parser, TOKEN_SEMICOLON) || parser_match(parser, TOKEN_RBRACE))
     {
         parser_advance(parser);
     }
@@ -81,20 +129,18 @@ void parser_skip_to_recovery_point(Parser *parser)
 
 ASTNode *parser_parse(Parser *parser)
 {
-    return parse_programa(parser);
+    ASTNode *programa = parse_programa(parser);
+    parser_print_recovered_errors(parser); // Exibe todos os erros no final
+    return programa;
 }
 
-// =================================================================
-// IMPLEMENTAÇÃO SEGUINDO A GRAMÁTICA CORRIGIDA
-// =================================================================
+// ... (O restante do parser.c permanece igual, mas com modificações nas funções de parsing para continuar após erros)
 
-// <programa> ::= { <preprocessador> } { <declaracao_global> }
 ASTNode *parse_programa(Parser *parser)
 {
     ASTNode *programa = ast_create_node(AST_PROGRAM);
 
-    // Pular preprocessadores
-    while (parser_match(parser, TOKEN_HASH) && !parser->has_error)
+    while (parser_match(parser, TOKEN_HASH) && !parser_match(parser, TOKEN_EOF))
     {
         ASTNode *prep = parse_preprocessador(parser);
         if (prep)
@@ -103,33 +149,30 @@ ASTNode *parse_programa(Parser *parser)
         }
     }
 
-    // Processar declarações globais
-    while (!parser_match(parser, TOKEN_EOF) && !parser->has_error)
+    while (!parser_match(parser, TOKEN_EOF))
     {
         ASTNode *decl = parse_declaracao_global(parser);
         if (decl)
         {
             ast_add_child(programa, decl);
         }
-        else if (!parser->has_error)
+        else
         {
-            // Se não conseguiu fazer parse mas não há erro, pode ser EOF
-            break;
+            if (parser->has_error)
+            {
+                parser->has_error = 0; // Reseta o erro para continuar
+                parser_skip_to_recovery_point(parser);
+            }
+            else
+            {
+                break; // EOF ou fim natural
+            }
         }
-    }
-
-    if (parser->has_error)
-    {
-        ast_destroy(programa);
-        return NULL;
     }
 
     return programa;
 }
 
-// <preprocessador> ::= "#include" ("<" <identificador> ".h" ">" | "\"" <identificador> ".h" "\"")
-//                   | "#define" <identificador> [ <macro_params> ] <macro_body>
-//                   | ...
 ASTNode *parse_preprocessador(Parser *parser)
 {
     if (!parser_match(parser, TOKEN_HASH))
@@ -138,33 +181,64 @@ ASTNode *parse_preprocessador(Parser *parser)
     }
 
     ASTNode *prep = ast_create_node(AST_PREPROCESSOR_DIRECTIVE);
-    parser_advance(parser); // consume '#'
+    parser_advance(parser);
 
     if (parser_match(parser, TOKEN_INCLUDE))
     {
         prep->data.preprocessor.directive = strdup("include");
         parser_advance(parser);
 
-        // Processar resto da linha de include (simplificado)
-        prep->data.preprocessor.content = strdup("stdio.h"); // placeholder
-
-        // Pular até fim da linha ou próximo token válido
-        while (!parser_match(parser, TOKEN_EOF) &&
-               !parser_match(parser, TOKEN_INT) &&
-               !parser_match(parser, TOKEN_FLOAT_KW) &&
-               !parser_match(parser, TOKEN_CHAR_KW) &&
-               !parser_match(parser, TOKEN_VOID) &&
-               !parser_match(parser, TOKEN_HASH))
+        if (parser_match(parser, TOKEN_LESS) || parser_match(parser, TOKEN_STRING))
         {
-            parser_advance(parser);
+            char *content = malloc(256);
+            content[0] = '\0';
+            if (parser_match(parser, TOKEN_LESS))
+            {
+                parser_advance(parser);
+                if (parser_match(parser, TOKEN_IDENTIFIER))
+                {
+                    strcat(content, parser->current_token.value);
+                    parser_advance(parser);
+                    if (parser_match(parser, TOKEN_DOT))
+                    {
+                        strcat(content, ".");
+                        parser_advance(parser);
+                        if (parser_match(parser, TOKEN_IDENTIFIER))
+                        {
+                            strcat(content, parser->current_token.value);
+                            parser_advance(parser);
+                        }
+                    }
+                    if (!parser_match(parser, TOKEN_GREATER))
+                    {
+                        parser_error(parser, "Esperado '>' após nome do arquivo");
+                    }
+                    else
+                    {
+                        parser_advance(parser);
+                    }
+                }
+                else
+                {
+                    parser_error(parser, "Esperado identificador após '<'");
+                }
+            }
+            else
+            {
+                strcat(content, parser->current_token.value);
+                parser_advance(parser);
+            }
+            prep->data.preprocessor.content = content;
+        }
+        else
+        {
+            parser_error(parser, "Esperado '<' ou string após 'include'");
         }
     }
     else
     {
-        // Outros preprocessadores - pular linha
         prep->data.preprocessor.directive = strdup("unknown");
         prep->data.preprocessor.content = strdup("");
-
         while (!parser_match(parser, TOKEN_EOF) &&
                !parser_match(parser, TOKEN_INT) &&
                !parser_match(parser, TOKEN_FLOAT_KW) &&
@@ -179,7 +253,6 @@ ASTNode *parse_preprocessador(Parser *parser)
     return prep;
 }
 
-// <declaracao_global> ::= <definicao_funcao> | <declaracao_variavel> | <typedef> | <struct>
 ASTNode *parse_declaracao_global(Parser *parser)
 {
     if (parser_match(parser, TOKEN_EOF))
@@ -187,7 +260,6 @@ ASTNode *parse_declaracao_global(Parser *parser)
         return NULL;
     }
 
-    // Por simplicidade, vamos focar em funções e variáveis
     if (parser_match(parser, TOKEN_INT) || parser_match(parser, TOKEN_FLOAT_KW) ||
         parser_match(parser, TOKEN_CHAR_KW) || parser_match(parser, TOKEN_VOID))
     {
@@ -198,10 +270,8 @@ ASTNode *parse_declaracao_global(Parser *parser)
     return NULL;
 }
 
-// Função auxiliar para distinguir função vs variável
 ASTNode *parse_declaracao_com_tipo(Parser *parser)
 {
-    // Capturar tipo
     DataType tipo = TYPE_VOID;
     if (parser_match(parser, TOKEN_INT))
         tipo = TYPE_INT;
@@ -212,12 +282,10 @@ ASTNode *parse_declaracao_com_tipo(Parser *parser)
     else if (parser_match(parser, TOKEN_VOID))
         tipo = TYPE_VOID;
 
-    parser_advance(parser); // consumir tipo
+    parser_advance(parser);
 
-    // Verificar se tem identificador
     if (!parser_match(parser, TOKEN_IDENTIFIER))
     {
-        // Verificar se é apenas "tipo;" (declaração incompleta)
         if (parser_match(parser, TOKEN_SEMICOLON))
         {
             parser_error(parser, "Declaração incompleta: esperado identificador após tipo");
@@ -230,37 +298,97 @@ ASTNode *parse_declaracao_com_tipo(Parser *parser)
     }
 
     char *nome = strdup(parser->current_token.value);
-    parser_advance(parser); // consumir identificador
+    parser_advance(parser);
 
-    // Decidir se é função ou variável
     if (parser_match(parser, TOKEN_LPAREN))
     {
-        return parse_definicao_funcao_com_info(parser, tipo, nome);
+        ASTNode *funcao = parse_definicao_funcao_com_info(parser, tipo, nome);
+        if (!funcao && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+        }
+        return funcao;
     }
     else
     {
-        return parse_declaracao_variavel_com_info(parser, tipo, nome);
+        ASTNode *var = parse_declaracao_variavel_com_info(parser, tipo, nome);
+        if (!var && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+        }
+        return var;
     }
 }
 
-// <definicao_funcao> ::= <tipo> <identificador> "(" [ <parametros> ] ")" <bloco>
 ASTNode *parse_definicao_funcao_com_info(Parser *parser, DataType tipo_retorno, char *nome)
 {
     ASTNode *funcao = ast_create_node(AST_FUNCTION_DECLARATION);
     funcao->data.function_decl.name = nome;
     funcao->data.function_decl.return_type = tipo_retorno;
+    funcao->data.function_decl.parameters = NULL;
 
-    parser_advance(parser); // consume '('
+    parser_advance(parser);
 
-    // Processar parâmetros (simplificado)
     if (!parser_match(parser, TOKEN_RPAREN))
     {
-        // TODO: implementar parse de parâmetros completo
-        // Por enquanto, pular até ')'
-        while (!parser_match(parser, TOKEN_RPAREN) && !parser_match(parser, TOKEN_EOF))
+        ASTNode *param_list = ast_create_node(AST_PARAMETER_LIST);
+        do
         {
-            parser_advance(parser);
-        }
+            if (parser_match(parser, TOKEN_INT) || parser_match(parser, TOKEN_FLOAT_KW) ||
+                parser_match(parser, TOKEN_CHAR_KW) || parser_match(parser, TOKEN_VOID))
+            {
+                DataType param_type = TYPE_VOID;
+                switch (parser->current_token.type)
+                {
+                case TOKEN_INT:
+                    param_type = TYPE_INT;
+                    break;
+                case TOKEN_FLOAT_KW:
+                    param_type = TYPE_FLOAT;
+                    break;
+                case TOKEN_CHAR_KW:
+                    param_type = TYPE_CHAR;
+                    break;
+                case TOKEN_VOID:
+                    param_type = TYPE_VOID;
+                    break;
+                }
+                parser_advance(parser);
+
+                if (!parser_match(parser, TOKEN_IDENTIFIER))
+                {
+                    parser_error(parser, "Esperado identificador para parâmetro");
+                    ast_destroy(funcao);
+                    ast_destroy(param_list);
+                    return NULL;
+                }
+
+                ASTNode *param = ast_create_node(AST_PARAMETER);
+                param->data.parameter.name = strdup(parser->current_token.value);
+                param->data.parameter.param_type = param_type;
+                parser_advance(parser);
+                ast_add_child(param_list, param);
+
+                if (parser_match(parser, TOKEN_COMMA))
+
+                {
+                    parser_advance(parser);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                parser_error(parser, "Esperado tipo de parâmetro");
+                ast_destroy(funcao);
+                ast_destroy(param_list);
+                return NULL;
+            }
+        } while (!parser_match(parser, TOKEN_RPAREN));
+
+        funcao->data.function_decl.parameters = param_list;
     }
 
     if (!parser_match(parser, TOKEN_RPAREN))
@@ -269,12 +397,12 @@ ASTNode *parse_definicao_funcao_com_info(Parser *parser, DataType tipo_retorno, 
         ast_destroy(funcao);
         return NULL;
     }
-    parser_advance(parser); // consume ')'
+    parser_advance(parser);
 
-    // Corpo da função
     funcao->data.function_decl.body = parse_bloco(parser);
-    if (!funcao->data.function_decl.body)
+    if (!funcao->data.function_decl.body && parser->has_error)
     {
+        parser->has_error = 0; // Reseta para continuar
         ast_destroy(funcao);
         return NULL;
     }
@@ -282,7 +410,6 @@ ASTNode *parse_definicao_funcao_com_info(Parser *parser, DataType tipo_retorno, 
     return funcao;
 }
 
-// <declaracao_variavel> ::= <tipo> <lista_identificadores> ";"
 ASTNode *parse_declaracao_variavel_com_info(Parser *parser, DataType tipo, char *nome)
 {
     ASTNode *var = ast_create_node(AST_VARIABLE_DECLARATION);
@@ -290,11 +417,16 @@ ASTNode *parse_declaracao_variavel_com_info(Parser *parser, DataType tipo, char 
     var->data.var_decl.var_type = tipo;
     var->data.var_decl.initializer = NULL;
 
-    // Verificar inicialização
     if (parser_match(parser, TOKEN_ASSIGN))
     {
-        parser_advance(parser); // consume '='
+        parser_advance(parser);
         var->data.var_decl.initializer = parse_expressao(parser);
+        if (!var->data.var_decl.initializer && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(var);
+            return NULL;
+        }
     }
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
@@ -303,12 +435,11 @@ ASTNode *parse_declaracao_variavel_com_info(Parser *parser, DataType tipo, char 
         ast_destroy(var);
         return NULL;
     }
-    parser_advance(parser); // consume ';'
+    parser_advance(parser);
 
     return var;
 }
 
-// <bloco> ::= "{" { <item_bloco> } "}"
 ASTNode *parse_bloco(Parser *parser)
 {
     if (!parser_match(parser, TOKEN_LBRACE))
@@ -318,36 +449,23 @@ ASTNode *parse_bloco(Parser *parser)
     }
 
     ASTNode *bloco = ast_create_node(AST_COMPOUND_STATEMENT);
-    parser_advance(parser); // consume '{'
+    parser_advance(parser);
 
-    while (!parser_match(parser, TOKEN_RBRACE) && !parser_match(parser, TOKEN_EOF) && !parser->has_error)
+    while (!parser_match(parser, TOKEN_RBRACE) && !parser_match(parser, TOKEN_EOF))
     {
         ASTNode *item = parse_item_bloco(parser);
-
         if (item)
         {
             ast_add_child(bloco, item);
         }
         else if (parser->has_error)
         {
-            // Tentar recuperar do erro
-            printf("TENTANDO RECUPERAR DO ERRO: %s\n", parser->error_message);
-
-            // Reset do erro para tentar continuar
-            parser->has_error = 0;
-
-            // Pular até ponto de recuperação
+            parser->has_error = 0; // Reseta para continuar
             parser_skip_to_recovery_point(parser);
-
-            // Se ainda estamos em um token válido, continuar
-            if (!parser_match(parser, TOKEN_EOF) && !parser_match(parser, TOKEN_RBRACE))
-            {
-                continue;
-            }
-            else
-            {
-                break;
-            }
+        }
+        else
+        {
+            break;
         }
     }
 
@@ -357,28 +475,21 @@ ASTNode *parse_bloco(Parser *parser)
         ast_destroy(bloco);
         return NULL;
     }
-    parser_advance(parser); // consume '}'
+    parser_advance(parser);
 
     return bloco;
 }
 
-// <item_bloco> ::= <declaracao_variavel> | <comando>
 ASTNode *parse_item_bloco(Parser *parser)
 {
-    // Verificar se é declaração de variável
     if (parser_match(parser, TOKEN_INT) || parser_match(parser, TOKEN_FLOAT_KW) ||
         parser_match(parser, TOKEN_CHAR_KW) || parser_match(parser, TOKEN_VOID))
     {
-        // Verificar se tem identificador após o tipo
         TokenType tipo_token = parser->current_token.type;
-        parser_advance(parser); // consumir tipo
+        parser_advance(parser);
 
         if (parser_match(parser, TOKEN_IDENTIFIER))
         {
-            // É declaração válida - voltar e processar
-            // Precisamos "voltar" o parser ou refazer a lógica
-
-            // Mapear token para DataType
             DataType tipo = TYPE_VOID;
             switch (tipo_token)
             {
@@ -394,35 +505,27 @@ ASTNode *parse_item_bloco(Parser *parser)
             case TOKEN_VOID:
                 tipo = TYPE_VOID;
                 break;
-            default:
-                tipo = TYPE_INT;
-                break;
             }
 
             char *nome = strdup(parser->current_token.value);
-            parser_advance(parser); // consumir identificador
-
+            parser_advance(parser);
             return parse_declaracao_variavel_com_info(parser, tipo, nome);
         }
         else if (parser_match(parser, TOKEN_SEMICOLON))
         {
-            // Declaração incompleta como "int;" - tratar como erro
             parser_error(parser, "Declaração incompleta: esperado identificador após tipo");
             return NULL;
         }
         else
         {
-            // Outro token - pode ser erro ou comando
             parser_error(parser, "Esperado identificador após tipo em declaração");
             return NULL;
         }
     }
 
-    // Senão é comando
     return parse_comando(parser);
 }
 
-// <comando> ::= <comando_sem_if> | <comando_if_completo> | <comando_if_incompleto>
 ASTNode *parse_comando(Parser *parser)
 {
     if (parser_match(parser, TOKEN_IF))
@@ -435,8 +538,6 @@ ASTNode *parse_comando(Parser *parser)
     }
 }
 
-// <comando_sem_if> ::= <comando_expressao> | <comando_bloco> | <comando_while> |
-//                     <comando_return> | <comando_break> | <comando_continue>
 ASTNode *parse_comando_sem_if(Parser *parser)
 {
     if (parser_match(parser, TOKEN_LBRACE))
@@ -465,12 +566,10 @@ ASTNode *parse_comando_sem_if(Parser *parser)
     }
 }
 
-// Implementação dos comandos específicos
 ASTNode *parse_comando_if(Parser *parser)
 {
     ASTNode *if_stmt = ast_create_node(AST_IF_STATEMENT);
-
-    parser_advance(parser); // consume 'if'
+    parser_advance(parser);
 
     if (!parser_match(parser, TOKEN_LPAREN))
     {
@@ -478,9 +577,15 @@ ASTNode *parse_comando_if(Parser *parser)
         ast_destroy(if_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume '('
+    parser_advance(parser);
 
     if_stmt->data.if_stmt.condition = parse_expressao(parser);
+    if (!if_stmt->data.if_stmt.condition && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        ast_destroy(if_stmt);
+        return NULL;
+    }
 
     if (!parser_match(parser, TOKEN_RPAREN))
     {
@@ -488,14 +593,26 @@ ASTNode *parse_comando_if(Parser *parser)
         ast_destroy(if_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ')'
+    parser_advance(parser);
 
     if_stmt->data.if_stmt.then_stmt = parse_comando(parser);
+    if (!if_stmt->data.if_stmt.then_stmt && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        ast_destroy(if_stmt);
+        return NULL;
+    }
 
     if (parser_match(parser, TOKEN_ELSE))
     {
-        parser_advance(parser); // consume 'else'
+        parser_advance(parser);
         if_stmt->data.if_stmt.else_stmt = parse_comando(parser);
+        if (!if_stmt->data.if_stmt.else_stmt && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(if_stmt);
+            return NULL;
+        }
     }
 
     return if_stmt;
@@ -504,8 +621,7 @@ ASTNode *parse_comando_if(Parser *parser)
 ASTNode *parse_comando_while(Parser *parser)
 {
     ASTNode *while_stmt = ast_create_node(AST_WHILE_STATEMENT);
-
-    parser_advance(parser); // consume 'while'
+    parser_advance(parser);
 
     if (!parser_match(parser, TOKEN_LPAREN))
     {
@@ -513,9 +629,15 @@ ASTNode *parse_comando_while(Parser *parser)
         ast_destroy(while_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume '('
+    parser_advance(parser);
 
     while_stmt->data.while_stmt.condition = parse_expressao(parser);
+    if (!while_stmt->data.while_stmt.condition && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        ast_destroy(while_stmt);
+        return NULL;
+    }
 
     if (!parser_match(parser, TOKEN_RPAREN))
     {
@@ -523,9 +645,15 @@ ASTNode *parse_comando_while(Parser *parser)
         ast_destroy(while_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ')'
+    parser_advance(parser);
 
     while_stmt->data.while_stmt.body = parse_comando(parser);
+    if (!while_stmt->data.while_stmt.body && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        ast_destroy(while_stmt);
+        return NULL;
+    }
 
     return while_stmt;
 }
@@ -533,12 +661,17 @@ ASTNode *parse_comando_while(Parser *parser)
 ASTNode *parse_comando_return(Parser *parser)
 {
     ASTNode *return_stmt = ast_create_node(AST_RETURN_STATEMENT);
-
-    parser_advance(parser); // consume 'return'
+    parser_advance(parser);
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
     {
         return_stmt->data.return_stmt.expression = parse_expressao(parser);
+        if (!return_stmt->data.return_stmt.expression && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(return_stmt);
+            return NULL;
+        }
     }
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
@@ -547,7 +680,7 @@ ASTNode *parse_comando_return(Parser *parser)
         ast_destroy(return_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ';'
+    parser_advance(parser);
 
     return return_stmt;
 }
@@ -555,7 +688,7 @@ ASTNode *parse_comando_return(Parser *parser)
 ASTNode *parse_comando_break(Parser *parser)
 {
     ASTNode *break_stmt = ast_create_node(AST_BREAK_STATEMENT);
-    parser_advance(parser); // consume 'break'
+    parser_advance(parser);
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
     {
@@ -563,7 +696,7 @@ ASTNode *parse_comando_break(Parser *parser)
         ast_destroy(break_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ';'
+    parser_advance(parser);
 
     return break_stmt;
 }
@@ -571,7 +704,7 @@ ASTNode *parse_comando_break(Parser *parser)
 ASTNode *parse_comando_continue(Parser *parser)
 {
     ASTNode *continue_stmt = ast_create_node(AST_CONTINUE_STATEMENT);
-    parser_advance(parser); // consume 'continue'
+    parser_advance(parser);
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
     {
@@ -579,7 +712,7 @@ ASTNode *parse_comando_continue(Parser *parser)
         ast_destroy(continue_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ';'
+    parser_advance(parser);
 
     return continue_stmt;
 }
@@ -595,6 +728,12 @@ ASTNode *parse_comando_expressao(Parser *parser)
         {
             ast_add_child(expr_stmt, expr);
         }
+        else if (parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(expr_stmt);
+            return NULL;
+        }
     }
 
     if (!parser_match(parser, TOKEN_SEMICOLON))
@@ -603,123 +742,178 @@ ASTNode *parse_comando_expressao(Parser *parser)
         ast_destroy(expr_stmt);
         return NULL;
     }
-    parser_advance(parser); // consume ';'
+    parser_advance(parser);
 
     return expr_stmt;
 }
 
-// =================================================================
-// EXPRESSÕES - Seguindo precedência da gramática
-// =================================================================
-
-// <expressao> ::= <expressao_virgula>
 ASTNode *parse_expressao(Parser *parser)
 {
     return parse_expressao_virgula(parser);
 }
 
-// <expressao_virgula> ::= <atribuicao> { "," <atribuicao> }
 ASTNode *parse_expressao_virgula(Parser *parser)
 {
     ASTNode *expr = parse_atribuicao(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_COMMA))
     {
         ASTNode *comma_expr = ast_create_node(AST_BINARY_EXPRESSION);
         comma_expr->data.binary_expr.left = expr;
         comma_expr->data.binary_expr.operator = TOKEN_COMMA;
-        parser_advance(parser); // consume ','
+        parser_advance(parser);
         comma_expr->data.binary_expr.right = parse_atribuicao(parser);
+        if (!comma_expr->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(comma_expr);
+            return expr;
+        }
         expr = comma_expr;
     }
 
     return expr;
 }
 
-// <atribuicao> ::= <condicional> [ <operador_atribuicao> <atribuicao> ]
 ASTNode *parse_atribuicao(Parser *parser)
 {
     ASTNode *expr = parse_condicional(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     if (parser_match(parser, TOKEN_ASSIGN))
     {
         ASTNode *assign = ast_create_node(AST_ASSIGNMENT_EXPRESSION);
         assign->data.binary_expr.left = expr;
         assign->data.binary_expr.operator = TOKEN_ASSIGN;
-        parser_advance(parser);                                    // consume '='
-        assign->data.binary_expr.right = parse_atribuicao(parser); // associativo à direita
+        parser_advance(parser);
+        assign->data.binary_expr.right = parse_atribuicao(parser);
+        if (!assign->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(assign);
+            return NULL;
+        }
         return assign;
     }
 
     return expr;
 }
 
-// <condicional> ::= <logico_ou> [ "?" <expressao> ":" <condicional> ]
 ASTNode *parse_condicional(Parser *parser)
 {
     ASTNode *expr = parse_logico_ou(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     if (parser_match(parser, TOKEN_QUESTION))
     {
         ASTNode *ternary = ast_create_node(AST_TERNARY_EXPRESSION);
         ternary->data.ternary_expr.condition = expr;
-        parser_advance(parser); // consume '?'
+        parser_advance(parser);
         ternary->data.ternary_expr.true_expr = parse_expressao(parser);
+        if (!ternary->data.ternary_expr.true_expr && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(ternary);
+            return NULL;
+        }
 
         if (!parser_match(parser, TOKEN_COLON))
         {
             parser_error(parser, "Esperado ':' em operador ternário");
             ast_destroy(ternary);
-            return expr;
+            return NULL;
         }
-        parser_advance(parser); // consume ':'
+        parser_advance(parser);
         ternary->data.ternary_expr.false_expr = parse_condicional(parser);
+        if (!ternary->data.ternary_expr.false_expr && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(ternary);
+            return NULL;
+        }
         return ternary;
     }
 
     return expr;
 }
 
-// <logico_ou> ::= <logico_e> { "||" <logico_e> }
 ASTNode *parse_logico_ou(Parser *parser)
 {
     ASTNode *expr = parse_logico_e(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_OR))
     {
         ASTNode *binary = ast_create_node(AST_BINARY_EXPRESSION);
         binary->data.binary_expr.left = expr;
         binary->data.binary_expr.operator = TOKEN_OR;
-        parser_advance(parser); // consume '||'
+        parser_advance(parser);
         binary->data.binary_expr.right = parse_logico_e(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <logico_e> ::= <igualdade> { "&&" <igualdade> }
 ASTNode *parse_logico_e(Parser *parser)
 {
     ASTNode *expr = parse_igualdade(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_AND))
     {
         ASTNode *binary = ast_create_node(AST_BINARY_EXPRESSION);
         binary->data.binary_expr.left = expr;
         binary->data.binary_expr.operator = TOKEN_AND;
-        parser_advance(parser); // consume '&&'
+        parser_advance(parser);
         binary->data.binary_expr.right = parse_igualdade(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <igualdade> ::= <relacional> { ("==" | "!=") <relacional> }
 ASTNode *parse_igualdade(Parser *parser)
 {
     ASTNode *expr = parse_relacional(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_EQUAL) || parser_match(parser, TOKEN_NOT_EQUAL))
     {
@@ -728,16 +922,26 @@ ASTNode *parse_igualdade(Parser *parser)
         binary->data.binary_expr.operator = parser->current_token.type;
         parser_advance(parser);
         binary->data.binary_expr.right = parse_relacional(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <relacional> ::= <soma> { ("<" | ">" | "<=" | ">=") <soma> }
 ASTNode *parse_relacional(Parser *parser)
 {
     ASTNode *expr = parse_soma(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_LESS) || parser_match(parser, TOKEN_GREATER) ||
            parser_match(parser, TOKEN_LESS_EQUAL) || parser_match(parser, TOKEN_GREATER_EQUAL))
@@ -747,16 +951,26 @@ ASTNode *parse_relacional(Parser *parser)
         binary->data.binary_expr.operator = parser->current_token.type;
         parser_advance(parser);
         binary->data.binary_expr.right = parse_soma(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <soma> ::= <produto> { ("+" | "-") <produto> }
 ASTNode *parse_soma(Parser *parser)
 {
     ASTNode *expr = parse_produto(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_PLUS) || parser_match(parser, TOKEN_MINUS))
     {
@@ -765,16 +979,26 @@ ASTNode *parse_soma(Parser *parser)
         binary->data.binary_expr.operator = parser->current_token.type;
         parser_advance(parser);
         binary->data.binary_expr.right = parse_produto(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <produto> ::= <unario> { ("*" | "/" | "%") <unario> }
 ASTNode *parse_produto(Parser *parser)
 {
     ASTNode *expr = parse_unario(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_MULTIPLY) || parser_match(parser, TOKEN_DIVIDE) ||
            parser_match(parser, TOKEN_MODULO))
@@ -784,23 +1008,25 @@ ASTNode *parse_produto(Parser *parser)
         binary->data.binary_expr.operator = parser->current_token.type;
         parser_advance(parser);
         binary->data.binary_expr.right = parse_unario(parser);
+        if (!binary->data.binary_expr.right && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(binary);
+            return expr;
+        }
         expr = binary;
     }
 
     return expr;
 }
 
-// <unario> ::= <operador_unario> <unario> | <sufixo>
 ASTNode *parse_unario(Parser *parser)
 {
     if (parser_match(parser, TOKEN_PLUS) || parser_match(parser, TOKEN_MINUS) ||
         parser_match(parser, TOKEN_NOT) || parser_match(parser, TOKEN_BITWISE_NOT) ||
         parser_match(parser, TOKEN_INCREMENT) || parser_match(parser, TOKEN_DECREMENT))
     {
-
         ASTNode *unary = ast_create_node(AST_UNARY_EXPRESSION);
-
-        // Mapear token para operador unário
         switch (parser->current_token.type)
         {
         case TOKEN_PLUS:
@@ -821,32 +1047,36 @@ ASTNode *parse_unario(Parser *parser)
         case TOKEN_DECREMENT:
             unary->data.unary_expr.operator = UNARY_PRE_DECREMENT;
             break;
-        default:
-            unary->data.unary_expr.operator = UNARY_PLUS;
-            break;
         }
-
         parser_advance(parser);
         unary->data.unary_expr.operand = parse_unario(parser);
+        if (!unary->data.unary_expr.operand && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            ast_destroy(unary);
+            return NULL;
+        }
         return unary;
     }
 
     return parse_sufixo(parser);
 }
 
-// <sufixo> ::= <primario> { <operador_sufixo> }
 ASTNode *parse_sufixo(Parser *parser)
 {
     ASTNode *expr = parse_primario(parser);
+    if (!expr && parser->has_error)
+    {
+        parser->has_error = 0; // Reseta para continuar
+        return NULL;
+    }
 
     while (parser_match(parser, TOKEN_LPAREN) || parser_match(parser, TOKEN_LBRACKET) ||
            parser_match(parser, TOKEN_DOT) || parser_match(parser, TOKEN_ARROW) ||
            parser_match(parser, TOKEN_INCREMENT) || parser_match(parser, TOKEN_DECREMENT))
     {
-
         if (parser_match(parser, TOKEN_LPAREN))
         {
-            // Chamada de função
             ASTNode *call = ast_create_node(AST_FUNCTION_CALL);
             if (expr && expr->type == AST_IDENTIFIER)
             {
@@ -856,10 +1086,8 @@ ASTNode *parse_sufixo(Parser *parser)
             {
                 call->data.function_call.name = strdup("unknown");
             }
+            parser_advance(parser);
 
-            parser_advance(parser); // consume '('
-
-            // Argumentos
             if (!parser_match(parser, TOKEN_RPAREN))
             {
                 do
@@ -869,6 +1097,10 @@ ASTNode *parse_sufixo(Parser *parser)
                     {
                         ast_add_child(call, arg);
                     }
+                    else if (parser->has_error)
+                    {
+                        parser->has_error = 0; // Reseta para continuar
+                    }
                     if (parser_match(parser, TOKEN_COMMA))
                     {
                         parser_advance(parser);
@@ -877,7 +1109,7 @@ ASTNode *parse_sufixo(Parser *parser)
                     {
                         break;
                     }
-                } while (!parser_match(parser, TOKEN_RPAREN) && !parser->has_error);
+                } while (!parser_match(parser, TOKEN_RPAREN));
             }
 
             if (!parser_match(parser, TOKEN_RPAREN))
@@ -886,23 +1118,20 @@ ASTNode *parse_sufixo(Parser *parser)
                 ast_destroy(call);
                 return expr;
             }
-            parser_advance(parser); // consume ')'
-
+            parser_advance(parser);
             if (expr)
                 ast_destroy(expr);
             expr = call;
         }
-        // TODO: implementar outros operadores sufixo ([], ., ->, ++, --)
         else
         {
-            break; // Por enquanto, parar aqui
+            break; // TODO: implementar [], ., ->, ++, --
         }
     }
 
     return expr;
 }
 
-// <primario> ::= <numero> | <caractere> | <string> | <identificador> | "(" <expressao> ")"
 ASTNode *parse_primario(Parser *parser)
 {
     if (parser_match(parser, TOKEN_IDENTIFIER))
@@ -947,8 +1176,13 @@ ASTNode *parse_primario(Parser *parser)
 
     if (parser_match(parser, TOKEN_LPAREN))
     {
-        parser_advance(parser); // consume '('
+        parser_advance(parser);
         ASTNode *expr = parse_expressao(parser);
+        if (!expr && parser->has_error)
+        {
+            parser->has_error = 0; // Reseta para continuar
+            return NULL;
+        }
 
         if (!parser_match(parser, TOKEN_RPAREN))
         {
@@ -957,7 +1191,7 @@ ASTNode *parse_primario(Parser *parser)
                 ast_destroy(expr);
             return NULL;
         }
-        parser_advance(parser); // consume ')'
+        parser_advance(parser);
         return expr;
     }
 
@@ -965,130 +1199,34 @@ ASTNode *parse_primario(Parser *parser)
     return NULL;
 }
 
-// =================================================================
-// FUNÇÕES OBSOLETAS - manter para compatibilidade
-// =================================================================
-
-ASTNode *parse_program(Parser *parser)
-{
-    return parse_programa(parser);
-}
-
-ASTNode *parse_declaration(Parser *parser)
-{
-    return parse_declaracao_global(parser);
-}
-
-ASTNode *parse_function_declaration(Parser *parser)
-{
-    // Esta função não é mais usada diretamente
-    (void)parser;
-    return NULL;
-}
-
-ASTNode *parse_variable_declaration(Parser *parser)
-{
-    // Esta função não é mais usada diretamente
-    (void)parser;
-    return NULL;
-}
-
-ASTNode *parse_statement(Parser *parser)
-{
-    return parse_comando(parser);
-}
-
-ASTNode *parse_compound_statement(Parser *parser)
-{
-    return parse_bloco(parser);
-}
-
-ASTNode *parse_expression_statement(Parser *parser)
-{
-    return parse_comando_expressao(parser);
-}
-
-ASTNode *parse_if_statement(Parser *parser)
-{
-    return parse_comando_if(parser);
-}
-
-ASTNode *parse_while_statement(Parser *parser)
-{
-    return parse_comando_while(parser);
-}
-
-ASTNode *parse_return_statement(Parser *parser)
-{
-    return parse_comando_return(parser);
-}
-
-ASTNode *parse_expression(Parser *parser)
-{
-    return parse_expressao(parser);
-}
-
-ASTNode *parse_assignment_expression(Parser *parser)
-{
-    return parse_atribuicao(parser);
-}
-
-ASTNode *parse_logical_or_expression(Parser *parser)
-{
-    return parse_logico_ou(parser);
-}
-
-ASTNode *parse_logical_and_expression(Parser *parser)
-{
-    return parse_logico_e(parser);
-}
-
-ASTNode *parse_equality_expression(Parser *parser)
-{
-    return parse_igualdade(parser);
-}
-
-ASTNode *parse_relational_expression(Parser *parser)
-{
-    return parse_relacional(parser);
-}
-
-ASTNode *parse_additive_expression(Parser *parser)
-{
-    return parse_soma(parser);
-}
-
-ASTNode *parse_multiplicative_expression(Parser *parser)
-{
-    return parse_produto(parser);
-}
-
-ASTNode *parse_unary_expression(Parser *parser)
-{
-    return parse_unario(parser);
-}
-
-ASTNode *parse_postfix_expression(Parser *parser)
-{
-    return parse_sufixo(parser);
-}
-
-ASTNode *parse_primary_expression(Parser *parser)
-{
-    return parse_primario(parser);
-}
-
+// Funções de compatibilidade
+ASTNode *parse_program(Parser *parser) { return parse_programa(parser); }
+ASTNode *parse_declaration(Parser *parser) { return parse_declaracao_global(parser); }
+ASTNode *parse_function_declaration(Parser *parser) { return NULL; }
+ASTNode *parse_variable_declaration(Parser *parser) { return NULL; }
+ASTNode *parse_statement(Parser *parser) { return parse_comando(parser); }
+ASTNode *parse_compound_statement(Parser *parser) { return parse_bloco(parser); }
+ASTNode *parse_expression_statement(Parser *parser) { return parse_comando_expressao(parser); }
+ASTNode *parse_if_statement(Parser *parser) { return parse_comando_if(parser); }
+ASTNode *parse_while_statement(Parser *parser) { return parse_comando_while(parser); }
+ASTNode *parse_return_statement(Parser *parser) { return parse_comando_return(parser); }
+ASTNode *parse_expression(Parser *parser) { return parse_expressao(parser); }
+ASTNode *parse_assignment_expression(Parser *parser) { return parse_atribuicao(parser); }
+ASTNode *parse_logical_or_expression(Parser *parser) { return parse_logico_ou(parser); }
+ASTNode *parse_logical_and_expression(Parser *parser) { return parse_logico_e(parser); }
+ASTNode *parse_equality_expression(Parser *parser) { return parse_igualdade(parser); }
+ASTNode *parse_relational_expression(Parser *parser) { return parse_relacional(parser); }
+ASTNode *parse_additive_expression(Parser *parser) { return parse_soma(parser); }
+ASTNode *parse_multiplicative_expression(Parser *parser) { return parse_produto(parser); }
+ASTNode *parse_unary_expression(Parser *parser) { return parse_unario(parser); }
+ASTNode *parse_postfix_expression(Parser *parser) { return parse_sufixo(parser); }
+ASTNode *parse_primary_expression(Parser *parser) { return parse_primario(parser); }
 ASTNode *parse_function_declaration_with_info(Parser *parser, DataType return_type, char *name)
 {
     return parse_definicao_funcao_com_info(parser, return_type, name);
 }
-
 ASTNode *parse_variable_declaration_with_info(Parser *parser, DataType type, char *name)
 {
     return parse_declaracao_variavel_com_info(parser, type, name);
 }
-
-ASTNode *parse_preprocessor_directive(Parser *parser)
-{
-    return parse_preprocessador(parser);
-}
+ASTNode *parse_preprocessor_directive(Parser *parser) { return parse_preprocessador(parser); }
